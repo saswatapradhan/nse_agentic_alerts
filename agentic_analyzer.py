@@ -183,6 +183,60 @@ Analyze this and call extract_stock_signal."""
         return None
 
 
+# ── Correlation-based confidence bump ──────────────────────────────
+# Applied AFTER analyze_pdf_text() returns a signal, BEFORE decide_alert()
+# is called on it — so decide_alert's threshold check sees the bumped
+# confidence, same as everything else that reads signal["confidence"].
+#
+# Pipeline order: analyze_pdf_text() -> apply_correlation_bump() -> decide_alert()
+
+NEWS_LED_CONFIDENCE_BUMP = 7  # STARTING ASSUMPTION — validate via learning loop
+MIN_LEAD_HOURS_FOR_BUMP = 0.5  # ignore trivial/noisy leads under 30 min
+
+
+def apply_correlation_bump(signal: dict, correlation_result=None) -> dict:
+    """
+    Mutates signal's confidence (capped at 100) and materiality_reasoning
+    if correlation_result indicates a genuine news_led lead. Also stamps
+    news_led/hours_lead onto the signal dict so callers can pass them
+    through to insert_alert() for tracking.
+
+    correlation_result: a CorrelationResult from correlation_engine.py,
+    or None if no correlation data is available (e.g. NSE-only run with
+    no scraper data) — in which case this is a no-op.
+    """
+    if signal is None:
+        return signal
+
+    signal["news_led"] = False
+    signal["hours_lead"] = None
+    signal["confidence_bump_reason"] = None
+
+    if correlation_result is None:
+        return signal
+
+    if (correlation_result.relationship == "news_led"
+            and correlation_result.hours_lead is not None
+            and correlation_result.hours_lead >= MIN_LEAD_HOURS_FOR_BUMP):
+
+        original_confidence = signal["confidence"]
+        bumped = min(100, original_confidence + NEWS_LED_CONFIDENCE_BUMP)
+        bump_reason = (
+            f"+{NEWS_LED_CONFIDENCE_BUMP} confidence: scraper reported this "
+            f"{correlation_result.hours_lead:.1f}hrs before NSE filing (news_led)"
+        )
+
+        signal["confidence"] = bumped
+        signal["materiality_reasoning"] = (
+            signal.get("materiality_reasoning", "") + " | " + bump_reason
+        )
+        signal["news_led"] = True
+        signal["hours_lead"] = correlation_result.hours_lead
+        signal["confidence_bump_reason"] = bump_reason
+
+    return signal
+
+
 def decide_alert(signal: dict) -> dict:
     if signal is None:
         return {"should_alert": False, "reason": "Analysis failed"}

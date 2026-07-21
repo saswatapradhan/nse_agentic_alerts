@@ -1,7 +1,17 @@
-"""requirements.txt"""
-openai>=1.50.0
+apscheduler==3.11.3
+feedparser==6.0.12
+openai==2.46.0
+pypdf==6.14.2
+python-dotenv==1.2.2
+rapidfuzz==3.14.5
+Requests==2.34.2
+yfinance==1.5.1
 requests>=2.31.0
-feedparser>=6.0.11
-pypdf>=4.0.0
-yfinance>=0.2.40
-APScheduler>=3.10.4
+feedparser>=6.0.10
+python-dateutil>=2.8.2
+# For agentic analyzer:
+openai>=1.0.0
+# For price fetching:
+yfinance>=0.2.33
+# For schedule:
+schedule>=1.2.0

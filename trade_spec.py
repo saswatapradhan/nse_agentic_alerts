@@ -21,12 +21,16 @@ What's real here:
   chasing if already up >2%" rule, but with real data instead of a guess
 - Position sizing: fixed conservative risk convention (~1-1.5% risk per
   trade), not a fabricated formula
+- Net return: gross target run through cost_model.py (Kotak Neo fees +
+  STCG) so the spec shows what actually reaches you, not just the raw
+  price move — a 3% gross move can net well under 2% after costs+tax.
 
 What's NOT real / not attempted:
 - True ATR (needs 14 days of persisted daily ranges — we don't store this yet)
 - Volume confirmation vs 20-day average (Sheet only gives today's snapshot)
 - Fundamentals-driven adjustments (D/E, ICR, FCF — no data source for these)
 """
+from cost_model import calculate_net_return
 
 # (category, is_positive) -> (min_pct, max_pct, typical_pct, holding_days_min, holding_days_max)
 # Ranges sourced from NSE-focused announcement-reaction research (dividend/
@@ -68,6 +72,17 @@ NO_TRADE_SPEC_CATEGORIES = {
 MAX_STOP_LOSS_PCT = 2.5   # hard cap on risk per trade, regardless of category
 MIN_STOP_LOSS_PCT = 1.0
 EXTENDED_MOVE_THRESHOLD_PCT = 8.0  # weekly move beyond which we flag "already extended"
+
+# Below this net %, don't call it a real trade opportunity — technically
+# positive but not worth the risk/effort/capital-days tied up. Judgment
+# call, not derived from data — revisit once real outcome history exists.
+MIN_WORTHWHILE_NET_PCT = 0.5
+
+# Representative position size used only for the cost/tax calculation.
+# Net % is close to scale-invariant for percentage-based fees, but the
+# ₹20 flat brokerage minimum means very small real positions will look
+# worse in % terms than this representative size suggests.
+REPRESENTATIVE_QUANTITY = 100
 
 
 def _get_range(category: str, sentiment: str, acquisition_role: str):
@@ -118,14 +133,32 @@ def generate_trade_spec(signal: dict, current_price: float, sheet_row: dict | No
     risk = abs(current_price - stop_price)
     risk_reward = round(reward / risk, 1) if risk > 0 else None
 
+    # Net return after Kotak Neo fees + STCG — this is what actually
+    # reaches you, not the gross target_pct above.
+    cost_breakdown = calculate_net_return(
+        entry_price=current_price,
+        exit_price=target_price,
+        quantity=REPRESENTATIVE_QUANTITY,
+    )
+    net_pct = cost_breakdown.net_pnl_pct
+    worthwhile = net_pct >= MIN_WORTHWHILE_NET_PCT
+
     return {
         "entry_price": round(current_price, 2),
         "target_price": round(target_price, 2),
-        "target_pct": round(typical_pct, 1),
+        "target_pct": round(typical_pct, 1),          # GROSS — unchanged from before
         "stop_price": round(stop_price, 2),
         "stop_pct": round(stop_pct, 1),
         "holding_period_days": f"{hold_min}-{hold_max}",
         "risk_reward_ratio": risk_reward,
         "caution_note": caution_note,
         "range_basis": f"{min_pct:+.1f}% to {max_pct:+.1f}% (cited research range)",
+        # NEW — net-of-cost/tax fields
+        "net_target_pct": round(net_pct, 2),
+        "net_worthwhile": worthwhile,
+        "cost_breakdown": {
+            "total_transaction_costs": cost_breakdown.total_transaction_costs,
+            "stcg_tax": cost_breakdown.stcg_tax,
+            "breakeven_price": cost_breakdown.breakeven_price,
+        },
     }
